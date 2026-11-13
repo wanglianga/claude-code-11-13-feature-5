@@ -42,6 +42,8 @@ public class SecurityConfig {
             .csrf(csrf -> csrf.disable())
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers("/swagger-ui/**", "/v3/api-docs/**", "/actuator/health").permitAll()
+                // 候选人查询门户：免登录，凭限时凭证访问（凭证自身承担访问控制与时效）
+                .requestMatchers("/api/public/**").permitAll()
                 .requestMatchers("/api/**").authenticated()
                 .anyRequest().permitAll())
             .httpBasic(basic -> {})

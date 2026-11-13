@@ -1,10 +1,14 @@
 <template>
-  <el-container style="min-height: 100vh">
+  <!-- 候选人查询门户：独立全屏布局，不展示内部操作台侧边栏 -->
+  <router-view v-if="$route.name === 'portal'" />
+  <el-container v-else style="min-height: 100vh">
     <el-aside width="230px" class="aside">
       <div class="logo">被遗忘权<br />合规操作台</div>
       <el-menu :default-active="$route.path" router background-color="#1f2d3d" text-color="#c0ccda" active-text-color="#409eff">
         <el-menu-item index="/subjects"><el-icon><User /></el-icon><span>主体归并确认</span></el-menu-item>
         <el-menu-item index="/tickets"><el-icon><Tickets /></el-icon><span>注销工单</span></el-menu-item>
+        <el-menu-item index="/identity"><el-icon><Connection /></el-icon><span>身份错配复核</span></el-menu-item>
+        <el-menu-item index="/replies"><el-icon><ChatDotRound /></el-icon><span>对外答复</span></el-menu-item>
         <el-menu-item index="/lineage"><el-icon><Share /></el-icon><span>资产与血缘</span></el-menu-item>
       </el-menu>
       <div class="aside-footer">

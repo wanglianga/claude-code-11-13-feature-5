@@ -31,6 +31,8 @@ app:
   cancel-window-minutes: ${CANCEL_WINDOW_MINUTES:30}
   # 监管问询函要求的法定答复期限（工作日）
   legal-deadline-workdays: 15
+  # 候选人查询门户限时凭证有效期（分钟）
+  portal-token-minutes: ${PORTAL_TOKEN_MINUTES:30}
   evidence:
     dir: ${EVIDENCE_DIR:./evidence}
 

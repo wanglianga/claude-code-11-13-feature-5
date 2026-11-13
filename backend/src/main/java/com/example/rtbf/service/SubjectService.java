@@ -15,8 +15,11 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 主体归并：扫描账号表，按手机号/邮箱/证件号哈希做连通分量归并。
- * 姓名只用于展示，永不进入归并键——同名不同人不会被并单。
+ * 主体归并：扫描账号表，按证件号/邮箱哈希做连通分量归并。
+ * 规则边界（身份错配复核要求）：
+ *  - 姓名只用于展示，永不进入归并键——同名不同人不会被并单
+ *  - 手机号相同只生成“待核验关系”（见 AttributionService），不在本处自动归并
+ *  - 两个账号各自持有证件指纹且互不相同 → 阻断归并，即使邮箱相同也不连通
  */
 @Service
 public class SubjectService {
@@ -38,9 +41,10 @@ public class SubjectService {
             SELECT account_id, phone_hash, email_hash, idcard_hash, name FROM biz.account ORDER BY account_id
             """, Map.of());
 
-        // 联合查找：两个账号只要共享任一标识符哈希就连通
+        // 联合查找：仅邮箱/证件号为强归并键；手机号不参与自动连通（同号只生成待核验关系）
         Map<String, String> parent = new HashMap<>();
         Map<String, List<IdentRow>> accountIdents = new LinkedHashMap<>();
+        Map<String, String> accountIdcard = new HashMap<>();
         for (Map<String, Object> acc : accounts) {
             String accountId = (String) acc.get("account_id");
             parent.put(accountId, accountId);
@@ -49,13 +53,26 @@ public class SubjectService {
             addIdent(idents, accountId, "EMAIL", (String) acc.get("email_hash"));
             addIdent(idents, accountId, "IDCARD", (String) acc.get("idcard_hash"));
             accountIdents.put(accountId, idents);
+            accountIdcard.put(accountId, (String) acc.get("idcard_hash"));
         }
-        // 以标识符哈希反查账号并连通
+        // 以强标识符哈希反查账号并连通；证件指纹冲突时阻断归并
         Map<String, String> hashToAccount = new HashMap<>();
+        List<String[]> blockedConflicts = new ArrayList<>();
         for (var e : accountIdents.entrySet()) {
             for (IdentRow r : e.getValue()) {
+                if ("PHONE".equals(r.type())) {
+                    // 手机号可能被家人/前任号主共用：只登记匹配项，不自动归并
+                    continue;
+                }
                 String existed = hashToAccount.get(r.hash());
                 if (existed != null) {
+                    String idA = accountIdcard.get(existed);
+                    String idB = accountIdcard.get(e.getKey());
+                    if (idA != null && idB != null && !idA.equals(idB)) {
+                        // 双方各执不同证件指纹 → 证件冲突，阻断归并（邮箱相同也不连通）
+                        blockedConflicts.add(new String[]{existed, e.getKey(), r.type(), r.hash()});
+                        continue;
+                    }
                     union(parent, existed, e.getKey());
                 } else {
                     hashToAccount.put(r.hash(), e.getKey());
@@ -121,6 +138,16 @@ public class SubjectService {
             }
             result.add(Map.of("subjectHash", subjectHash, "displayName", displayName,
                               "accounts", memberAccounts, "identifierCount", identHashes.size()));
+        }
+        for (String[] c : blockedConflicts) {
+            audit.log(null, principal.getName(), "IDCARD_CONFLICT_MERGE_BLOCKED",
+                      Map.of("accountA", c[0], "accountB", c[1], "sharedType", c[2],
+                             "note", "证件指纹冲突，禁止自动归并，转身份异议复核"));
+        }
+        if (!blockedConflicts.isEmpty()) {
+            // 阻断信息随扫描结果返回，便于操作台提示；关系落库由 AttributionService 统一维护
+            audit.log(null, principal.getName(), "SCAN_BLOCKED_CONFLICT_SUMMARY",
+                      Map.of("blockedCount", blockedConflicts.size()));
         }
         return result;
     }

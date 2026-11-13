@@ -141,13 +141,23 @@ class RtbfWorkflowIntegrationTest {
     @Order(2)
     void scan_merge_keepsSameNameButDifferentPersonApart() {
         JsonNode scanned = post("compliance", "/api/subjects/scan", Map.of());
-        assertEquals(3, scanned.size(), "应归并出 3 个主体");
+        // V7 新增 ACC-1003（同手机号）、ACC-4001（历史误归并）两个独立自然人 → 共 5 个主体
+        assertEquals(5, scanned.size(), "应归并出 5 个主体（手机号同号不自动归并）");
         JsonNode subjects = get("viewer", "/api/subjects");
         long zhangWei = java.util.stream.StreamSupport.stream(subjects.spliterator(), false)
             .filter(s -> "张伟".equals(s.get("display_name").asText())).count();
         assertEquals(2, zhangWei, "两个同名张伟必须是两个独立主体");
         JsonNode a = get("viewer", "/api/subjects/" + SUBJ_A);
         assertEquals(5, a.get("identifierMatches").size(), "A 跨两账号共 5 条标识符匹配");
+
+        // 手机号相同只生成待核验关系；证件指纹冲突阻断归并
+        JsonNode rel = post("compliance", "/api/identity/relations/scan", Map.of());
+        assertTrue(rel.get("pendingPhoneRelations").asInt() >= 1, "同手机号必须生成待核验关系");
+        assertTrue(rel.get("blockedIdcardConflicts").asInt() >= 1, "证件指纹冲突必须阻断归并");
+        JsonNode pending = get("viewer", "/api/identity/relations?status=PENDING_VERIFICATION");
+        assertTrue(pending.size() >= 1);
+        JsonNode blocked = get("viewer", "/api/identity/relations?status=BLOCKED");
+        assertTrue(blocked.size() >= 1);
     }
 
     @Test
@@ -205,11 +215,12 @@ class RtbfWorkflowIntegrationTest {
         assertEquals("EXECUTED", funnel.get("status").asText());
         assertTrue(funnel.get("diff_value").asText().contains("JOB-03=-1"));
 
-        // 物理清除可反查：A 主体主表清零，其他主体不受影响
+        // 物理清除可反查：A 主体主表清零，其他主体不受影响（V7 后全库 6 个账号，删 2 剩 4）
         assertEquals(0, jdbc.queryForObject(
             "SELECT count(*) FROM biz.account WHERE subject_hash = ?", Integer.class, SUBJ_A));
-        assertEquals(2, jdbc.queryForObject("SELECT count(*) FROM biz.account", Integer.class));
-        assertEquals(2, jdbc.queryForObject(
+        assertEquals(4, jdbc.queryForObject("SELECT count(*) FROM biz.account", Integer.class));
+        // A 的 2 条每日备份保留期未到不清除；V7 新增 1 条错挂备份同属 A 主体哈希且未到期 → 共 3 条
+        assertEquals(3, jdbc.queryForObject(
             "SELECT count(*) FROM biz.backup_archive WHERE subject_hash = ?", Integer.class, SUBJ_A));
 
         // 模型卡自动生成且待决策
